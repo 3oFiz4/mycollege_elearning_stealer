@@ -477,21 +477,21 @@
     if (!UTILS_isWorkPage()) return;
     if (!UTILS_isQueueActive()) return;
 
-    if (UTILS_hasAlreadyRunToday()) {
-      console.log(
-        "%c[HW_Fetcher] Already ran today. Skipping.",
-        "background: #0f0; color: #fff",
-      );
-      return;
-    } else {
-      console.log(
-        `%c[HW_Fetcher] OBSERVING...`,
-        "background: #f00; color: #fff",
-      );
-      console.log(
-        "[HW_Fetcher] Work page detected, queue is active. Waiting for DOM...",
-      );
-    }
+    // if (UTILS_hasAlreadyRunToday()) {
+    //   console.log(
+    //     "%c[HW_Fetcher] Already ran today. Skipping.",
+    //     "background: #0f0; color: #fff",
+    //   );
+    //   return;
+    // } else {
+    //   console.log(
+    //     `%c[HW_Fetcher] OBSERVING...`,
+    //     "background: #f00; color: #fff",
+    //   );
+    //   console.log(
+    //     "[HW_Fetcher] Work page detected, queue is active. Waiting for DOM...",
+    //   );
+    // }
     setTimeout(SEGMENT_getDeadline, 3000);
   });
 })();
