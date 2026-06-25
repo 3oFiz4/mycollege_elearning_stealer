@@ -247,6 +247,7 @@
 
     UTILS_webhookPOST(fullMessage).then(function () {
       console.log("[HW_Fetcher] Webhook sent. Queue complete.");
+      localStorage.setItem(STORAGE_KEY_LAST_RUN, new Date().toDateString());
       UTILS_removeSessionKeys([
         SESSION_KEY_QUEUE,
         SESSION_KEY_INDEX,
@@ -421,15 +422,15 @@
 
       let label = "";
       if (daysDiff <= 1) {
-        label = ":interrobang:";
+        label = ":hot_face: <@&1519690716278816793>";
       } else if (daysDiff <= 2) {
-        label = ":bangbang:";
+        label = ":red_circle: <@&1519690716278816793>";
       } else if (daysDiff <= 3) {
-        label = ":exclamation:";
+        label = ":orange_circle: <@&1519690638814347407>";
       } else if (daysDiff <= 5) {
-        label = ":grey_exclamation:";
+        label = ":green_circle: <@&1519690554328485949>";
       } else if (daysDiff <= 7) {
-        label = ":grey_question:";
+        label = ":white_cirlce: <@&1519690471683657789>";
       }
 
       const entry = {
@@ -477,21 +478,21 @@
     if (!UTILS_isWorkPage()) return;
     if (!UTILS_isQueueActive()) return;
 
-    // if (UTILS_hasAlreadyRunToday()) {
-    //   console.log(
-    //     "%c[HW_Fetcher] Already ran today. Skipping.",
-    //     "background: #0f0; color: #fff",
-    //   );
-    //   return;
-    // } else {
-    //   console.log(
-    //     `%c[HW_Fetcher] OBSERVING...`,
-    //     "background: #f00; color: #fff",
-    //   );
-    //   console.log(
-    //     "[HW_Fetcher] Work page detected, queue is active. Waiting for DOM...",
-    //   );
-    // }
+    if (UTILS_hasAlreadyRunToday()) {
+      console.log(
+        "%c[HW_Fetcher] Already ran today. Skipping.",
+        "background: #0f0; color: #fff",
+      );
+      return;
+    } else {
+      console.log(
+        `%c[HW_Fetcher] OBSERVING...`,
+        "background: #f00; color: #fff",
+      );
+      console.log(
+        "[HW_Fetcher] Work page detected, queue is active. Waiting for DOM...",
+      );
+    }
     setTimeout(SEGMENT_getDeadline, 3000);
   });
 })();

@@ -213,19 +213,19 @@
 
   // --- entry point ---
   window.addEventListener("load", () => {
-    // if (UTILS_hasAlreadyRunToday()) {
-    console.log(
-      "%c[Class_Fetcher] Already ran today. Skipping.",
-      "background: #0f0; color: #fff",
-    );
-    return;
-    // } else {
-    //     console.log(`%cOBSERVING...`, 'background: #f00; color: #fff');
-    //     console.log(`%cDo **not** abuse this script.`, 'color:#f00');
-    // }
+    if (UTILS_hasAlreadyRunToday()) {
+      console.log(
+        "%c[Class_Fetcher] Already ran today. Skipping.",
+        "background: #0f0; color: #fff",
+      );
+      return;
+    } else {
+      console.log(`%cOBSERVING...`, "background: #f00; color: #fff");
+      console.log(`%cDo **not** abuse this script.`, "color:#f00");
+    }
 
     setTimeout(function () {
-      UTILS_markRanToday();
+      // UTILS_markRanToday();
       SEGMENT_getClass();
       SEGMENT_prepareAndStartQueue();
     }, 4000);
