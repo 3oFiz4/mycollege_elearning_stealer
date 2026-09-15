@@ -408,7 +408,13 @@
       const daysDiffRaw = UTILS_getDateDifference(dueDate);
       if (daysDiffRaw <= 0) return;
 
-      const daysDiff = Math.ceil(daysDiffRaw);
+      // Changed daysDiff to daysDiff - 1
+      /*
+      Suppose a HW deadline is at 6/1/2026 @ 15:00
+      And the program is triggered at 5/1/2026 @ 15:00, this program assumes that the difference between the day is 2
+      By decreasing it 1 day, it is fixed exactly 1 day deadline.
+      */
+      const daysDiff = Math.ceil(daysDiffRaw) - 1;
 
       // --- deduplicate ---
       const isDuplicate = collectedHW.some(function (existing) {
@@ -433,6 +439,7 @@
         label = ":white_cirlce: <@&1519690471683657789>";
       }
 
+      
       const entry = {
         className: className,
         hw_name: hw_name,
