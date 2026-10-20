@@ -30,12 +30,15 @@ if finish => send_message_to_discord
 # Installation
 
 1. Ensure you have TamperMonkey installed, get it on ChromeExtension
-2. On TamperMonkey, go to `Config` and then open InstalledUserscripts
-3. Click the `+` button right beside the current tab.
-4. Copy and Paste the `Class_Fetcher.js` and Save
-5. Do the same at number 3, but now copy and paste for `HW_Fetcher.js`
-6. Go to the elearning college website
-7. Wait and let it do it's own process
+2. On Extension settings, go to Tampermonkey Config, and set "Allowed UserScript" as True.
+<img width="685" height="92" alt="image" src="https://github.com/user-attachments/assets/b5e94b75-98e1-463a-b943-1d11a0205e43" />
+
+4. On TamperMonkey, go to `Config` and then open InstalledUserscripts
+5. Click the `+` button right beside the current tab.
+6. Copy and Paste the `Class_Fetcher.js` and Save
+7. Do the same at number 3, but now copy and paste for `HW_Fetcher.js`
+8. Go to the elearning college website
+9. Wait and let it do it's own process
 
 ## Optional (Recommended)
 
