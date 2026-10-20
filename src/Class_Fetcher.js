@@ -2,12 +2,15 @@
 // @name         Class Fetcher
 // @namespace    http://tampermonkey.net/
 // @version      2026-04-23
-// @description  Expose a bunch of Homework list with their deadline and origin schedule via HTTP POST to Discord WebHook
+// @description  Expose a bunch of Homework list with their deadline and origin schedule via HTTP POST to Discord WebHook and WhatsApp
 // @author       3oFiz4
-// @match        https://elearning.pnb.ac.id/mahasiswa/list-class
+// @match        https://elearning.pnb.ac.id/mahasiswa/list-class*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=ac.id
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @grant        GM_xmlhttpRequest
+// @grant        window.close
+// @connect      127.0.0.1
+// @connect      localhost
 // @connect      target-site.com
 // @noframes
 // ==/UserScript==
@@ -19,6 +22,7 @@
 (function () {
   const NO_REPEAT_IN_A_DAY = true;
   const STORAGE_KEY_LAST_RUN = "__HW_NOTIFIER_LAST_RUN_DATE__";
+  const LOCAL_PORT_URL = "http://127.0.0.1:5005/output";
 
   function UTILS_hasAlreadyRunToday() {
     if (!NO_REPEAT_IN_A_DAY) return false;
@@ -34,20 +38,6 @@
 
   if (window.__HW_NOTIFIER_CLASS_FETCHER_LOADED__) return;
   window.__HW_NOTIFIER_CLASS_FETCHER_LOADED__ = true;
-
-  /* this is a yap i made at early version. no need to see this.
-    console.log("[!] Homework Notifier status OK");
-    console.log(`
-    This script is made by 3oFiz4. It is made for the sake of convenience of exposing a bunch of homework list with their created and deadline date via HTTP POST to Discord Webhook.`);
-
-    */
-
-  /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! READ ME (apologize for the long-ass !)!!
-    console.log(`
-    %cIf CSP blocks this script, unblock it.
-    Please always wait 2 seconds for each segment of the script to run to avoid SPA.
-    `, 'color:#fff;background:black;');
-    */
 
   const class_list_element_grid = "div.container.my-5 .v-card";
   const class_link_element = ".v-toolbar__title a";
@@ -106,6 +96,64 @@
   function UTILS_removeSessionKeys(keys) {
     keys.forEach(function (key) {
       sessionStorage.removeItem(key);
+    });
+  }
+
+  function UTILS_sendToLocalPort(payload) {
+    const localUrl = LOCAL_PORT_URL;
+    const dataString = JSON.stringify(payload);
+
+    return new Promise(function (resolve) {
+      console.log("[Class_Fetcher] Sending status to local port at " + localUrl + "...");
+
+      if (typeof GM_xmlhttpRequest === "function") {
+        try {
+          GM_xmlhttpRequest({
+            method: "POST",
+            url: localUrl,
+            headers: {
+              "Content-Type": "application/json",
+            },
+            data: dataString,
+            timeout: 5000,
+            onload: function (response) {
+              console.log("[Class_Fetcher] Local port response:", response.status);
+              resolve(true);
+            },
+            onerror: function (err) {
+              console.warn("[Class_Fetcher] GM_xmlhttpRequest error, trying fetch...", err);
+              fallbackFetch();
+            },
+            ontimeout: function () {
+              console.warn("[Class_Fetcher] GM_xmlhttpRequest timeout, trying fetch...");
+              fallbackFetch();
+            },
+          });
+          return;
+        } catch (e) {
+          console.warn("[Class_Fetcher] Exception calling GM_xmlhttpRequest:", e);
+        }
+      }
+
+      fallbackFetch();
+
+      function fallbackFetch() {
+        fetch(localUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: dataString,
+        })
+          .then(function (res) {
+            console.log("[Class_Fetcher] Successfully sent to local port via fetch.");
+            resolve(true);
+          })
+          .catch(function (err) {
+            console.warn("[Class_Fetcher] Could not reach local port via fetch:", err);
+            resolve(false);
+          });
+      }
     });
   }
 
@@ -181,6 +229,13 @@
 
     if (!queue.length) {
       console.warn("[Class_Fetcher] No classes found — queue empty.");
+      UTILS_sendToLocalPort({
+        source: "Class_Fetcher",
+        status: "empty",
+        count: 0,
+        items: [],
+        message: "No classes found on list-class page.",
+      });
       return;
     }
 
@@ -218,6 +273,13 @@
         "%c[Class_Fetcher] Already ran today. Skipping.",
         "background: #0f0; color: #fff",
       );
+      UTILS_sendToLocalPort({
+        source: "Class_Fetcher",
+        status: "skipped",
+        count: 0,
+        items: [],
+        message: "Class_Fetcher already ran today.",
+      });
       return;
     } else {
       console.log(`%cOBSERVING...`, "background: #f00; color: #fff");

@@ -2,14 +2,17 @@
 // @name         HW Fetcher
 // @namespace    http://tampermonkey.net/
 // @version      2026-04-23
-// @description  Expose a bunch of Homework list with their deadline and origin schedule via HTTP POST to Discord WebHook
+// @description  Expose a bunch of Homework list with their deadline and origin schedule via HTTP POST to Discord WebHook and WhatsApp
 // @author       3oFiz4
 // @match        https://elearning.pnb.ac.id/mahasiswa/class/detail/work?class=*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=ac.id
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @grant        GM_xmlhttpRequest
-// @connect      target-site.com
 // @grant        window.close
+// @connect      discord.com
+// @connect      127.0.0.1
+// @connect      localhost
+// @connect      target-site.com
 // @noframes
 // ==/UserScript==
 
@@ -32,6 +35,22 @@
   // Config (you can modify this variable)
   const WEBHOOK_URL =
     "https://discord.com/api/webhooks/1503018580235653230/e2hjAlMXmf_YpSpgauik1alpPs_IyFsU-qmRVatyTptXfSzuZwp3lMY6g34Pjikv1pW5";
+  const LOCAL_PORT_URL = "http://127.0.0.1:5005/output";
+
+  // --- Deadline Filter Config ---
+  // If false: only detect upcoming deadlines (ignores deadlines that already passed behind)
+  // If true: detect all deadlines even if they already passed behind
+  const DETECT_PAST_DEADLINES = true;
+
+  // --- Delay / Timing Config (in milliseconds) ---
+  const INITIAL_PAGE_LOAD_DELAY = 300; // Delay before starting extraction after work page loads
+  const DOM_WAIT_RETRY_DELAY = 200; // Interval between checking if DOM/URL matches expected class
+  const DOM_WAIT_MAX_RETRIES = 5; // Max attempts waiting for DOM/URL to match
+  const PAGE_RETRY_DELAY = 200; // Delay before retrying expansion panel search
+  const PAGE_RETRY_LIMIT = 3; // Max retries for panels to appear
+  const NAVIGATE_DELAY = 200; // Delay before navigating to the next class in queue
+  const CLOSE_TAB_DELAY = 100; // Delay before closing tab when queue finishes
+  const LOCAL_PORT_TIMEOUT = 5000; // Timeout for GM_xmlhttpRequest to local port
 
   // --- shared session keys ---
   const SESSION_KEY_QUEUE = "__HW_NOTIFIER_QUEUE__";
@@ -44,9 +63,6 @@
 
   // --- per-page state ---
   let PAGE_RETRY_COUNTER = 0;
-  const PAGE_RETRY_LIMIT = 8;
-  const PAGE_RETRY_DELAY = 2000;
-  const NAVIGATE_DELAY = 2000;
 
   function UTILS_parseDueDate(text) {
     const match = text.match(/Due\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
@@ -63,6 +79,7 @@
   function UTILS_fetchPage(url) {
     window.location.href = url;
   }
+
   function UTILS_webhookPOST(content) {
     const webhookURL = WEBHOOK_URL;
 
@@ -99,6 +116,143 @@
       });
     });
   }
+
+  function UTILS_sendToLocalPort(payload) {
+    const localUrl = LOCAL_PORT_URL;
+    const dataString = JSON.stringify(payload);
+
+    return new Promise(function (resolve) {
+      console.log(
+        "[HW_Fetcher] Sending output to local port at " + localUrl + "...",
+      );
+
+      // Try GM_xmlhttpRequest if available (bypasses browser mixed-content and CORS restrictions)
+      if (typeof GM_xmlhttpRequest === "function") {
+        try {
+          GM_xmlhttpRequest({
+            method: "POST",
+            url: localUrl,
+            headers: {
+              "Content-Type": "application/json",
+            },
+            data: dataString,
+            timeout: LOCAL_PORT_TIMEOUT,
+            onload: function (response) {
+              console.log(
+                "[HW_Fetcher] Successfully communicated with local port:",
+                response.status,
+                response.responseText,
+              );
+              resolve(true);
+            },
+            onerror: function (err) {
+              console.warn(
+                "[HW_Fetcher] GM_xmlhttpRequest error sending to local port, trying fetch fallback...",
+                err,
+              );
+              fallbackFetch();
+            },
+            ontimeout: function () {
+              console.warn(
+                "[HW_Fetcher] GM_xmlhttpRequest timed out, trying fetch fallback...",
+              );
+              fallbackFetch();
+            },
+          });
+          return;
+        } catch (e) {
+          console.warn("[HW_Fetcher] Exception calling GM_xmlhttpRequest:", e);
+        }
+      }
+
+      fallbackFetch();
+
+      function fallbackFetch() {
+        fetch(localUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: dataString,
+        })
+          .then(function (res) {
+            console.log(
+              "[HW_Fetcher] Successfully communicated with local port via fetch:",
+              res.status,
+            );
+            resolve(true);
+          })
+          .catch(function (err) {
+            console.warn(
+              "[HW_Fetcher] Failed communicating with local port via fetch:",
+              err,
+            );
+            resolve(false);
+          });
+      }
+    });
+  }
+
+  function UTILS_formatWhatsAppMessage(items) {
+    if (!items || items.length === 0) {
+      return (
+        "🎉 *PENGINGAT TUGAS E-LEARNING*\n\n" +
+        "Tidak ada tugas yang pending hari ini. Santai dulu! ✨"
+      );
+    }
+
+    const todayStr = new Date().toLocaleDateString("id-ID", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const hasUrgent = items.some(function (hw) {
+      return Number(hw.daysDiff) <= 1;
+    });
+    const tagHeader = hasUrgent
+      ? "@everyone 🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n"
+      : "";
+
+    let msg = tagHeader;
+    msg += "📚 *PENGINGAT TUGAS E-LEARNING* 📚\n";
+    msg += `📅 ${todayStr}\n`;
+    msg += "━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+    items.forEach(function (hw, i) {
+      let urgencyEmoji = "⚪";
+      if (hw.daysDiff <= 0) {
+        const passedDays = Math.abs(hw.daysDiff);
+        urgencyEmoji =
+          passedDays === 0
+            ? "⚠️ *TELAH BERAKHIR HARI INI*"
+            : `⚠️ *TELAH LEWAT ${passedDays} HARI*`;
+      } else if (hw.daysDiff <= 1) {
+        urgencyEmoji = "🚨 *HARI INI / BESOK* (Segera kumpulkan!)";
+      } else if (hw.daysDiff <= 2) {
+        urgencyEmoji = "🔴 *2 hari lagi*";
+      } else if (hw.daysDiff <= 3) {
+        urgencyEmoji = "🟠 *3 hari lagi*";
+      } else if (hw.daysDiff <= 5) {
+        urgencyEmoji = "🟢 *5 hari lagi*";
+      } else {
+        urgencyEmoji = "⚪ *" + hw.daysDiff + " hari lagi*";
+      }
+
+      msg += `*${i + 1}. ${hw.className}*\n`;
+      msg += `> 📝 *Tugas:* ${hw.hw_name}\n`;
+      msg += `> ⏰ *${hw.cleanDate}*\n`;
+      msg += `> Sisa Waktu: ${urgencyEmoji}\n\n`;
+    });
+
+    msg += "━━━━━━━━━━━━━━━━━━━━━\n";
+    msg += `Total: *${items.length}* tugas terdeteksi.\n`;
+    msg += "_Notifikasi otomatis dikirim via E-Learning Stealer_";
+
+    return msg;
+  }
+
   function UTILS_sendMessagesSequentially(messages, delayMs) {
     let chain = Promise.resolve();
     messages.forEach(function (msg) {
@@ -146,6 +300,7 @@
   function UTILS_isWorkPage() {
     return window.location.pathname.includes("mahasiswa/class/detail/work");
   }
+
   function UTILS_waitForFreshDOM(
     expectedClassNumber,
     callback,
@@ -153,8 +308,8 @@
     retryDelay,
   ) {
     let attempts = 0;
-    maxRetries = maxRetries || 10;
-    retryDelay = retryDelay || 2000;
+    maxRetries = maxRetries || DOM_WAIT_MAX_RETRIES;
+    retryDelay = retryDelay || DOM_WAIT_RETRY_DELAY;
 
     function check() {
       attempts++;
@@ -204,49 +359,59 @@
     WEBHOOK_SENT = true;
 
     console.log(
-      "[HW_Fetcher] All classes processed. Sending collected HW to webhook...",
+      "[HW_Fetcher] All classes processed. Sending collected HW to webhook & local port...",
     );
 
     const collectedHW = UTILS_getSessionJSON(SESSION_KEY_COLLECTED_HW, []);
 
-    if (collectedHW.length === 0) {
-      console.log("[HW_Fetcher] No homework to send.");
-      UTILS_removeSessionKeys([
-        SESSION_KEY_QUEUE,
-        SESSION_KEY_INDEX,
-        SESSION_KEY_ACTIVE,
-        SESSION_KEY_CURRENT_CLASS,
-        SESSION_KEY_CLASS_DICTIONARY,
-        SESSION_KEY_DONE,
-        SESSION_KEY_COLLECTED_HW,
-      ]);
-      return;
+    let fullDiscordMessage = "";
+    if (collectedHW.length > 0) {
+      const lines = collectedHW.map(function (hw, i) {
+        const labelText = hw.label ? hw.label + " " : "";
+        return (
+          "**" +
+          (i + 1) +
+          ".** __" +
+          hw.className +
+          "__\n" +
+          "> " +
+          hw.hw_name +
+          "\n" +
+          "> **Deadline**: " +
+          hw.cleanDate +
+          " (" +
+          labelText +
+          hw.daysDiff +
+          " day(s) left)"
+        );
+      });
+      fullDiscordMessage = lines.join("\n\n");
     }
 
-    const lines = collectedHW.map(function (hw, i) {
-      const labelText = hw.label ? hw.label + " " : "";
-      return (
-        "**" +
-        (i + 1) +
-        ".** __" +
-        hw.className +
-        "__\n" +
-        "> " +
-        hw.hw_name +
-        "\n" +
-        "> **Deadline**: " +
-        hw.cleanDate +
-        " (" +
-        labelText +
-        hw.daysDiff +
-        " day(s) left)"
-      );
-    });
+    const payload = {
+      source: "HW_Fetcher",
+      status: "success",
+      count: collectedHW.length,
+      items: collectedHW,
+      discordMessage: fullDiscordMessage,
+      whatsappMessage: UTILS_formatWhatsAppMessage(collectedHW),
+      timestamp: new Date().toISOString(),
+    };
 
-    const fullMessage = lines.join("\n\n");
+    const tasks = [];
 
-    UTILS_webhookPOST(fullMessage).then(function () {
-      console.log("[HW_Fetcher] Webhook sent. Queue complete.");
+    // 1. Send output to local port (for automaton.py and alert.js)
+    tasks.push(UTILS_sendToLocalPort(payload));
+
+    // 2. Send output to Discord webhook if there is homework
+    if (collectedHW.length > 0 && fullDiscordMessage) {
+      tasks.push(UTILS_webhookPOST(fullDiscordMessage));
+    } else {
+      console.log("[HW_Fetcher] No homework to send to Discord webhook.");
+    }
+
+    Promise.all(tasks).then(function () {
+      console.log("[HW_Fetcher] Notifications dispatched. Queue complete.");
       localStorage.setItem(STORAGE_KEY_LAST_RUN, new Date().toDateString());
       UTILS_removeSessionKeys([
         SESSION_KEY_QUEUE,
@@ -376,7 +541,6 @@
     PAGE_RETRY_COUNTER = 0;
     const className = currentClass.className || "Unknown Class";
     const collectedHW = UTILS_getSessionJSON(SESSION_KEY_COLLECTED_HW, []);
-    const beforeCount = collectedHW.length;
     let addedCount = 0;
 
     console.log(
@@ -406,7 +570,7 @@
       if (!dueDate || isNaN(dueDate.getTime())) return;
 
       const daysDiffRaw = UTILS_getDateDifference(dueDate);
-      if (daysDiffRaw <= 0) return;
+      if (!DETECT_PAST_DEADLINES && daysDiffRaw <= 0) return;
 
       const daysDiff = Math.ceil(daysDiffRaw);
 
@@ -421,7 +585,9 @@
       if (isDuplicate) return;
 
       let label = "";
-      if (daysDiff <= 1) {
+      if (daysDiff <= 0) {
+        label = ":skull: (Sudah Lewat)";
+      } else if (daysDiff <= 1) {
         label = ":hot_face: <@&1519690716278816793>";
       } else if (daysDiff <= 2) {
         label = ":red_circle: <@&1519690716278816793>";
@@ -460,6 +626,7 @@
     UTILS_markClassDone(currentClass);
     SEGMENT_runQueueStep();
   }
+
   function UTILS_closeTab() {
     console.log("[HW_Fetcher] Closing tab...");
     setTimeout(function () {
@@ -470,7 +637,7 @@
           "[HW_Fetcher] Could not close tab automatically. Please close manually.",
         );
       }
-    }, 1000);
+    }, CLOSE_TAB_DELAY);
   }
 
   // --- entry point ---
@@ -483,6 +650,15 @@
         "%c[HW_Fetcher] Already ran today. Skipping.",
         "background: #0f0; color: #fff",
       );
+      UTILS_sendToLocalPort({
+        source: "HW_Fetcher",
+        status: "skipped",
+        count: 0,
+        items: [],
+        message: "HW_Fetcher already ran today.",
+      }).then(function () {
+        UTILS_closeTab();
+      });
       return;
     } else {
       console.log(
@@ -493,6 +669,6 @@
         "[HW_Fetcher] Work page detected, queue is active. Waiting for DOM...",
       );
     }
-    setTimeout(SEGMENT_getDeadline, 3000);
+    setTimeout(SEGMENT_getDeadline, INITIAL_PAGE_LOAD_DELAY);
   });
 })();

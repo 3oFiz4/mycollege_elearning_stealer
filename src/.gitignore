@@ -1,0 +1,5 @@
+.env
+.hw_notifier>scheduled
+node_modules/
+session_auth/
+package-lock.json
