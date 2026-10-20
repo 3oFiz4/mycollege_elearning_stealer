@@ -37,6 +37,17 @@ if finish => send_message_to_discord
 6. Go to the elearning college website
 7. Wait and let it do it's own process
 
+## Optional (Recommended)
+
+8. Create a `.env` file and insert these variables:
+
+```
+WHATSAPP_PHONE_NUMBER = "YOUR_PHONE_NUMBER"
+WHATSAPP_GROUP_JID = "<YOUR_WHATSAPP_GROUP_JID>@g.us"
+```
+
+9. Initiate `automaton.py` for first try, it will inquire you to connect your WhatsApp account with QR Code.
+
 # Constraint
 
 1. This script requires you to open the elearning directly. But if you're a lazy-fuck like I do, and wanted this automated even when you do not open it directly. Then you can use `src/automate.py`
@@ -48,10 +59,12 @@ Sometimes tracking each lecturer due task is tiring. I made this script for conv
 # QNA
 
 1. Is it illegal?
-   > Technically, no. You are acting as user agent, you have your own agent-header, and you accessed it by your own account, even Cloudflare let you in. What the script does, it simply to automate the 'act' of getting the deadlines. After all, we did not bypass Cloudflare verification. So it's not a replacement or automaton, it is in regards to the User intent.
+   > Technically, yes :skull: (previously NO). Ok, after the recent update, I decided to be a smart asshole, and add a feature where the report is not just sent into Discord Webhook, but also to my Whatsapp Web.... self-hosted :skull:.... Regarding the web part, you are acting as user agent, you have your own agent-header, and you accessed it by your own account, even Cloudflare let you in. What the script does, it simply to automate the 'act' of getting the deadlines. After all, we did not bypass Cloudflare verification. So it's not a replacement or automaton, it is in regards to the User intent.
 2. How to use this?
-   > Either you forget to read, or you cannot read. Again, this script is reserved for my fellow colleagues to use. In order to track their task deadlines easily. It is **NOT** reserved for others.
+   > Either you forget to read, or you cannot read. Again, this script is reserved for my fellow colleagues to use. In order to track their task deadlines easily. It is **NOT** reserved for others. You can learn how I do it though :).
 3. It seems I cannot accessed the content or the DOM, due to CSP regulation, how do I prevent this>
    > Go to ChromeExtension, and install CSP blocker. And disable it for this college elearning website. I personally used "Disable Content-Security-Policy" extension.
 4. You leaked your Webhook link, can I spam furry_sex in it?
    > Go on.
+5. Is this AI involved?
+   > Yup. I used self-hosted Qwen 7B model.
