@@ -17,7 +17,7 @@ const TARGET_GROUP_JID = process.env.WHATSAPP_GROUP_JID;
 
 const DEFAULT_ALERT_MESSAGE =
   "⚠️ E-Learning Alert: Default notification check.";
-const SEND_ON_EMPTY = false;
+const SEND_ON_EMPTY = true;
 
 /**
  * Format homework items into a clean WhatsApp message

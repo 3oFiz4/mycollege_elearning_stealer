@@ -1,0 +1,17 @@
+{
+  "source": "HW_Fetcher",
+  "status": "success",
+  "count": 1,
+  "items": [
+    {
+      "className": "Analisis dan Perancangan Sistem-20261-A",
+      "hw_name": "UTS",
+      "cleanDate": "Due 2026-11-01 23:59:00",
+      "daysDiff": 5,
+      "label": ":green_circle: <@&1519690554328485949>"
+    }
+  ],
+  "discordMessage": "**1.** __Analisis dan Perancangan Sistem-20261-A__\n> UTS\n> **Deadline**: Due 2026-11-01 23:59:00 (:green_circle: <@&1519690554328485949> 5 day(s) left)",
+  "whatsappMessage": "📚 *PENGINGAT TUGAS E-LEARNING* 📚\n📅 Selasa, 27 Oktober 2026\n━━━━━━━━━━━━━━━━━━━━━\n\n*1. Analisis dan Perancangan Sistem-20261-A*\n> 📝 *Tugas:* UTS\n> ⏰ *Due 2026-11-01 23:59:00*\n> Sisa Waktu: 🟢 *5 hari lagi*\n\n━━━━━━━━━━━━━━━━━━━━━\nTotal: *1* tugas terdeteksi.\n_Notifikasi otomatis dikirim via E-Learning Stealer_",
+  "timestamp": "2026-10-27T08:55:25.151Z"
+}
