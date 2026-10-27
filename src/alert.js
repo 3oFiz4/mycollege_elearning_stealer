@@ -19,6 +19,9 @@ const DEFAULT_ALERT_MESSAGE =
   "⚠️ E-Learning Alert: Default notification check.";
 const SEND_ON_EMPTY = true;
 
+// Debug configuration: offset current date by N days forward (e.g. 3) to test deadline urgency & mentions
+const DEBUG_DATE_OFFSET_DAYS = 3;
+
 /**
  * Format homework items into a clean WhatsApp message
  */
@@ -30,24 +33,35 @@ function formatWhatsAppMessage(items) {
     );
   }
 
-  const todayStr = new Date().toLocaleDateString("id-ID", {
+  const simulatedDate = new Date();
+  if (DEBUG_DATE_OFFSET_DAYS) {
+    simulatedDate.setDate(simulatedDate.getDate() + DEBUG_DATE_OFFSET_DAYS);
+  }
+
+  const todayStr = simulatedDate.toLocaleDateString("id-ID", {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 
-  const hasUrgent = items.some((hw) => Number(hw.daysDiff) <= 1);
+  // If items have daysDiff calculated without debug offset, adjust it by DEBUG_DATE_OFFSET_DAYS
+  const adjustedItems = items.map((hw) => ({
+    ...hw,
+    daysDiff: DEBUG_DATE_OFFSET_DAYS ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS : Number(hw.daysDiff),
+  }));
+
+  const hasUrgent = adjustedItems.some((hw) => Number(hw.daysDiff) <= 2);
   const tagHeader = hasUrgent
-    ? "@everyone 🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n"
-    : "";
+    ? "🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n"
+    : "📚 *PENGINGAT TUGAS E-LEARNING* 📚\n\n";
 
   let msg = tagHeader;
   msg += "eLEARNING HOMEWORK REMINDER \n";
-  msg += `${todayStr}\n`;
+  msg += `${todayStr}${DEBUG_DATE_OFFSET_DAYS ? ` (Simulasi +${DEBUG_DATE_OFFSET_DAYS} Hari)` : ""}\n`;
   msg += "━━━━━━━━━━━━━━━━━━━━━\n\n";
 
-  items.forEach((hw, i) => {
+  adjustedItems.forEach((hw, i) => {
     let urgencyEmoji = "⚪";
     if (hw.daysDiff <= 0) {
       const passedDays = Math.abs(hw.daysDiff);
@@ -84,7 +98,9 @@ function formatWhatsAppMessage(items) {
  * Resolves the message text from payload object or file
  */
 function formatFromPayload(data) {
-  if (typeof data === "string") return data;
+  if (typeof data === "string") {
+    return data;
+  }
   if (!data) return DEFAULT_ALERT_MESSAGE;
 
   // If skipped (e.g., already ran today)
@@ -103,7 +119,7 @@ function formatFromPayload(data) {
     return null;
   }
 
-  // If items list was provided, re-format using formatWhatsAppMessage so @everyone logic applies
+  // If items list was provided, re-format using formatWhatsAppMessage so logic applies
   if (Array.isArray(data.items)) {
     return formatWhatsAppMessage(data.items);
   }
@@ -235,7 +251,7 @@ async function resolveTargetJid(sock) {
 
 async function sendSelfAlert(customMessage) {
   const resolved = resolvePayload();
-  const messageToSend =
+  let messageToSend =
     customMessage !== undefined ? customMessage : resolved.message;
 
   if (!messageToSend) {
@@ -264,6 +280,35 @@ async function sendSelfAlert(customMessage) {
 
   sock.ev.on("creds.update", saveCreds);
 
+  // Track latest incoming message keys per chat to identify "message above"
+  const latestChatMessages = {};
+  const lastMsgFile = path.join(__dirname, ".last_alert_message.json");
+
+  let savedLastKey = null;
+  if (fs.existsSync(lastMsgFile)) {
+    try {
+      savedLastKey = JSON.parse(fs.readFileSync(lastMsgFile, "utf-8"));
+    } catch (e) {
+      console.warn("[alert.js] Could not parse last message file:", e.message);
+    }
+  }
+
+  sock.ev.on("messages.upsert", ({ messages }) => {
+    for (const m of messages) {
+      if (m.key && m.key.remoteJid && m.message && !m.message.protocolMessage) {
+        latestChatMessages[m.key.remoteJid] = m.key;
+      }
+    }
+  });
+
+  sock.ev.on("messaging-history.set", ({ messages }) => {
+    for (const m of messages) {
+      if (m.key && m.key.remoteJid && m.message && !m.message.protocolMessage) {
+        latestChatMessages[m.key.remoteJid] = m.key;
+      }
+    }
+  });
+
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -288,26 +333,196 @@ async function sendSelfAlert(customMessage) {
         process.exit(1);
       }
 
-      console.log(`[alert.js] Sending alert to: ${targetJid}`);
+      console.log(`[alert.js] Target JID: ${targetJid}`);
 
-      // Check if message mentions @everyone or has items due in <= 1 day
-      const mentions = [];
-      const hasUrgent =
-        (resolved.items &&
-          resolved.items.some((hw) => Number(hw.daysDiff) <= 1)) ||
-        messageToSend.includes("@everyone");
+      // Small delay to allow any incoming sync packets / messages to be captured
+      await new Promise((r) => setTimeout(r, 1500));
 
-      if (hasUrgent && targetJid.endsWith("@g.us")) {
+      // --- 1. DELETE MESSAGE ABOVE ---
+      const deleteTargets = [];
+      if (latestChatMessages[targetJid]) {
+        deleteTargets.push(latestChatMessages[targetJid]);
+      }
+      if (
+        savedLastKey &&
+        (!latestChatMessages[targetJid] ||
+          savedLastKey.id !== latestChatMessages[targetJid].id)
+      ) {
+        deleteTargets.push(savedLastKey);
+      }
+
+      for (const target of deleteTargets) {
+        const msgId = target.id;
+        const fromMe = Boolean(target.fromMe);
+        console.log(
+          `[alert.js] Attempting deletion of message above (ID: ${msgId}, fromMe: ${fromMe})...`,
+        );
+
+        // Attempt 1: Standard delete via sock.sendMessage
+        let deleted = false;
         try {
+          const deletePayload = {
+            remoteJid: targetJid,
+            id: msgId,
+            fromMe: fromMe,
+          };
+          if (target.participant) {
+            deletePayload.participant = target.participant;
+          }
+          await sock.sendMessage(targetJid, { delete: deletePayload });
+          deleted = true;
+          console.log(`[alert.js] Successfully sent revoke for message ${msgId}.`);
+        } catch (delErr) {
+          console.warn(`[alert.js] sock.sendMessage delete failed: ${delErr.message}`);
+        }
+
+        // Attempt 2: If fromMe was false or attempt 1 threw, try as admin revoke (edit: '8')
+        if (!deleted && !fromMe && targetJid.endsWith("@g.us")) {
+          try {
+            await sock.sendMessage(targetJid, {
+              delete: {
+                remoteJid: targetJid,
+                id: msgId,
+                fromMe: false,
+                participant: target.participant,
+              },
+            });
+            deleted = true;
+            console.log(`[alert.js] Admin revoke sent for message ${msgId}.`);
+          } catch (delErr2) {
+            console.warn(`[alert.js] Admin revoke failed: ${delErr2.message}`);
+          }
+        }
+
+        // Attempt 3: Local chat clear via chatModify so message is cleared from chat view
+        try {
+          if (typeof sock.chatModify === "function") {
+            await sock.chatModify(
+              {
+                clear: {
+                  messages: [
+                    {
+                      id: msgId,
+                      fromMe: fromMe,
+                      timestamp: target.messageTimestamp || Date.now().toString(),
+                    },
+                  ],
+                },
+              },
+              targetJid,
+            );
+            console.log(`[alert.js] Chat view cleared for message ${msgId}.`);
+          }
+        } catch (clearErr) {
+          // Non-critical if chatModify fails
+        }
+
+        await new Promise((r) => setTimeout(r, 800));
+      }
+
+      // --- 2. RETRIEVE PARTICIPANTS FOR @everyone MENTION ---
+      // Requirement: Ping everyone when "Sisa waktu" is on 2 days left (daysDiff <= 2)
+      // Account for DEBUG_DATE_OFFSET_DAYS during simulation debugging
+      const shouldPingEveryone = Boolean(
+        resolved.items &&
+          resolved.items.some((hw) => {
+            const effectiveDiff = DEBUG_DATE_OFFSET_DAYS
+              ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS
+              : Number(hw.daysDiff);
+            return effectiveDiff <= 2;
+          }),
+      );
+
+      const mentions = [];
+      const participantTags = [];
+
+      if (shouldPingEveryone && targetJid.endsWith("@g.us")) {
+        console.log(
+          "[alert.js] Task deadline is within 2 days! Preparing single mention for all members...",
+        );
+        try {
+          // Load reverse LID-to-phone mapping cache if available
+          let reverseLidCache = {};
+          const cachePath = path.join(__dirname, "session_auth", "lid_reverse_cache.json");
+          if (fs.existsSync(cachePath)) {
+            try {
+              reverseLidCache = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+            } catch (e) {}
+          }
+
+          const rawParticipants = [];
           const meta = await sock.groupMetadata(targetJid);
           for (const p of meta.participants || []) {
-            if (p.id) mentions.push(p.id);
-            if (p.phoneNumber && !mentions.includes(p.phoneNumber)) {
-              mentions.push(p.phoneNumber);
+            rawParticipants.push(p);
+          }
+
+          // If target group is community announcement group, also check parent community members
+          const groups = await sock.groupFetchAllParticipating().catch(() => ({}));
+          const targetGroup = groups[targetJid];
+          if (targetGroup?.linkedParent) {
+            try {
+              const parentMeta = await sock.groupMetadata(targetGroup.linkedParent);
+              for (const p of parentMeta.participants || []) {
+                rawParticipants.push(p);
+              }
+            } catch (parentErr) {
+              // Ignore parent fetch error
             }
           }
+
+          // Identify our own bot numbers to avoid self-tagging
+          const myPn = sock.user?.id ? sock.user.id.split("@")[0].split(":")[0] : null;
+          const myLid = sock.user?.lid ? sock.user.lid.split("@")[0].split(":")[0] : null;
+
+          // Deduplicate so each human member is represented only ONCE
+          const seenUsers = new Set();
+          if (myPn) seenUsers.add(myPn);
+          if (myLid) seenUsers.add(myLid);
+
+          for (const p of rawParticipants) {
+            let uniqueId = null;
+            let pnJid = null;
+
+            if (p.phoneNumber) {
+              const cleanPn = p.phoneNumber.replace(/\D/g, "");
+              if (cleanPn) {
+                uniqueId = cleanPn;
+                pnJid = `${cleanPn}@s.whatsapp.net`;
+              }
+            }
+
+            const idStr = p.id || "";
+            const rawUser = idStr.split("@")[0].split(":")[0];
+
+            if (!uniqueId) {
+              if (idStr.endsWith("@s.whatsapp.net")) {
+                uniqueId = rawUser;
+                pnJid = `${rawUser}@s.whatsapp.net`;
+              } else if (idStr.endsWith("@lid")) {
+                if (reverseLidCache[rawUser]) {
+                  uniqueId = reverseLidCache[rawUser];
+                  pnJid = `${reverseLidCache[rawUser]}@s.whatsapp.net`;
+                } else {
+                  uniqueId = rawUser;
+                  pnJid = `${rawUser}@lid`;
+                }
+              } else {
+                uniqueId = rawUser;
+                pnJid = idStr;
+              }
+            }
+
+            if (!uniqueId || seenUsers.has(uniqueId)) {
+              continue;
+            }
+
+            seenUsers.add(uniqueId);
+            mentions.push(pnJid);
+            participantTags.push(`@${uniqueId}`);
+          }
+
           console.log(
-            `[alert.js] Urgent deadline detected (<= 1 day left)! Tagging ${mentions.length} participant(s) via @everyone.`,
+            `[alert.js] Found ${participantTags.length} unique member(s) to ping (single mention each).`,
           );
         } catch (err) {
           console.warn(
@@ -317,13 +532,43 @@ async function sendSelfAlert(customMessage) {
         }
       }
 
+      // Format final message:
+      // If deadline <= 2 days, append single list of tags so WhatsApp parses mentions without duplicates.
+      // If deadline > 2 days, no member tags are appended.
+      let finalMessage = messageToSend;
+      if (participantTags.length > 0) {
+        const tagTokensString = participantTags.join(" ");
+        finalMessage = `${finalMessage}\n\n👥 ${tagTokensString}`;
+      }
+
+      // --- 3. SEND MESSAGE ---
       try {
-        const sendOptions = { text: messageToSend };
+        const sendOptions = { text: finalMessage };
         if (mentions.length > 0) {
           sendOptions.mentions = mentions;
         }
 
-        await sock.sendMessage(targetJid, sendOptions);
+        console.log(`[alert.js] Sending alert to: ${targetJid}`);
+        const sent = await sock.sendMessage(targetJid, sendOptions);
+
+        if (sent && sent.key) {
+          try {
+            fs.writeFileSync(
+              lastMsgFile,
+              JSON.stringify(sent.key, null, 2),
+              "utf-8",
+            );
+            console.log(
+              "[alert.js] Saved sent message key for future deletion.",
+            );
+          } catch (saveErr) {
+            console.warn(
+              "[alert.js] Failed saving sent message key:",
+              saveErr.message,
+            );
+          }
+        }
+
         console.log(
           `[alert.js] Alert successfully posted to "${TARGET_COMMUNITY_NAME}" -> Pengumuman!`,
         );

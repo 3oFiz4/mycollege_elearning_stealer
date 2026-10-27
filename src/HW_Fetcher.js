@@ -40,16 +40,16 @@
   // --- Deadline Filter Config ---
   // If false: only detect upcoming deadlines (ignores deadlines that already passed behind)
   // If true: detect all deadlines even if they already passed behind
-  const DETECT_PAST_DEADLINES = true;
+  const DETECT_PAST_DEADLINES = false;
 
   // --- Delay / Timing Config (in milliseconds) ---
-  const INITIAL_PAGE_LOAD_DELAY = 300; // Delay before starting extraction after work page loads
-  const DOM_WAIT_RETRY_DELAY = 200; // Interval between checking if DOM/URL matches expected class
+  const INITIAL_PAGE_LOAD_DELAY = 1000; // Delay before starting extraction after work page loads
+  const DOM_WAIT_RETRY_DELAY = 2000; // Interval between checking if DOM/URL matches expected class
   const DOM_WAIT_MAX_RETRIES = 5; // Max attempts waiting for DOM/URL to match
-  const PAGE_RETRY_DELAY = 200; // Delay before retrying expansion panel search
+  const PAGE_RETRY_DELAY = 2000; // Delay before retrying expansion panel search
   const PAGE_RETRY_LIMIT = 3; // Max retries for panels to appear
-  const NAVIGATE_DELAY = 200; // Delay before navigating to the next class in queue
-  const CLOSE_TAB_DELAY = 100; // Delay before closing tab when queue finishes
+  const NAVIGATE_DELAY = 2000; // Delay before navigating to the next class in queue
+  const CLOSE_TAB_DELAY = 2000; // Delay before closing tab when queue finishes
   const LOCAL_PORT_TIMEOUT = 5000; // Timeout for GM_xmlhttpRequest to local port
 
   // --- shared session keys ---
@@ -64,6 +64,11 @@
   // --- per-page state ---
   let PAGE_RETRY_COUNTER = 0;
 
+  // --- Debug / Date Offset Config ---
+  // Set DEBUG_DATE_OFFSET_DAYS to a number (e.g., 3) to simulate a date forward in time.
+  // 3 days forward simulates Date.now() + 3 days, making 5-day deadlines become 2 days left.
+  const DEBUG_DATE_OFFSET_DAYS = 4;
+
   function UTILS_parseDueDate(text) {
     const match = text.match(/Due\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
     if (!match) return null;
@@ -72,6 +77,9 @@
 
   function UTILS_getDateDifference(targetDate) {
     const now = new Date();
+    if (DEBUG_DATE_OFFSET_DAYS) {
+      now.setDate(now.getDate() + DEBUG_DATE_OFFSET_DAYS);
+    }
     const diffMs = targetDate - now;
     return diffMs / (1000 * 60 * 60 * 24);
   }
@@ -81,38 +89,77 @@
   }
 
   function UTILS_webhookPOST(content) {
-    const webhookURL = WEBHOOK_URL;
+    const webhookURL = WEBHOOK_URL + "?wait=true";
+    const storageKey = "HW_LAST_DISCORD_MSG_ID";
+    const lastMsgId = localStorage.getItem(storageKey);
 
-    return new Promise(function (resolve) {
-      $.ajax({
-        url: webhookURL,
-        method: "POST",
-        contentType: "application/json",
-        data: JSON.stringify({ content: content }),
-        success: function (response) {
-          console.log("[HW_Fetcher] Webhook sent successfully.");
-          resolve(true);
-        },
-        error: function (xhr) {
-          if (xhr.status === 429) {
-            const retryAfter = JSON.parse(xhr.responseText).retry_after || 2;
+    let deletePromise = Promise.resolve();
+    if (lastMsgId) {
+      deletePromise = new Promise(function (delResolve) {
+        console.log(
+          "[HW_Fetcher] Deleting previous Discord message above:",
+          lastMsgId,
+        );
+        $.ajax({
+          url: WEBHOOK_URL + "/messages/" + lastMsgId,
+          method: "DELETE",
+          success: function () {
+            console.log("[HW_Fetcher] Previous Discord message deleted.");
+            localStorage.removeItem(storageKey);
+            delResolve();
+          },
+          error: function (xhr) {
             console.warn(
-              "[HW_Fetcher] Rate limited. Retrying after " +
-                retryAfter +
-                "s...",
-            );
-            setTimeout(function () {
-              UTILS_webhookPOST(content).then(resolve);
-            }, retryAfter * 1000);
-          } else {
-            console.warn(
-              "[HW_Fetcher] Webhook error:",
+              "[HW_Fetcher] Could not delete previous Discord message:",
               xhr.status,
-              xhr.responseText,
             );
-            resolve(false);
-          }
-        },
+            localStorage.removeItem(storageKey);
+            delResolve();
+          },
+        });
+      });
+    }
+
+    return deletePromise.then(function () {
+      return new Promise(function (resolve) {
+        $.ajax({
+          url: webhookURL,
+          method: "POST",
+          contentType: "application/json",
+          data: JSON.stringify({
+            content: content,
+            allowed_mentions: {
+              parse: ["everyone", "roles", "users"],
+            },
+          }),
+          success: function (response) {
+            console.log("[HW_Fetcher] Webhook sent successfully.");
+            if (response && response.id) {
+              localStorage.setItem(storageKey, response.id);
+            }
+            resolve(true);
+          },
+          error: function (xhr) {
+            if (xhr.status === 429) {
+              const retryAfter = JSON.parse(xhr.responseText).retry_after || 2;
+              console.warn(
+                "[HW_Fetcher] Rate limited. Retrying after " +
+                  retryAfter +
+                  "s...",
+              );
+              setTimeout(function () {
+                UTILS_webhookPOST(content).then(resolve);
+              }, retryAfter * 1000);
+            } else {
+              console.warn(
+                "[HW_Fetcher] Webhook error:",
+                xhr.status,
+                xhr.responseText,
+              );
+              resolve(false);
+            }
+          },
+        });
       });
     });
   }
@@ -195,10 +242,7 @@
 
   function UTILS_formatWhatsAppMessage(items) {
     if (!items || items.length === 0) {
-      return (
-        "🎉 *PENGINGAT TUGAS E-LEARNING*\n\n" +
-        "Tidak ada tugas yang pending hari ini. Santai dulu! ✨"
-      );
+      return "" + "Ngak ada tugas ya sayang sayang ku.. Ngopi dluu";
     }
 
     const todayStr = new Date().toLocaleDateString("id-ID", {
@@ -209,14 +253,11 @@
     });
 
     const hasUrgent = items.some(function (hw) {
-      return Number(hw.daysDiff) <= 1;
+      return Number(hw.daysDiff) <= 2;
     });
-    const tagHeader = hasUrgent
-      ? "@everyone 🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n"
-      : "";
+    const tagHeader = hasUrgent ? "🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n" : "";
 
     let msg = tagHeader;
-    msg += "📚 *PENGINGAT TUGAS E-LEARNING* 📚\n";
     msg += `📅 ${todayStr}\n`;
     msg += "━━━━━━━━━━━━━━━━━━━━━\n\n";
 
@@ -385,7 +426,7 @@
           " day(s) left)"
         );
       });
-      fullDiscordMessage = lines.join("\n\n");
+      fullDiscordMessage = "@everyone\n\n" + lines.join("\n\n");
     }
 
     const payload = {
@@ -605,7 +646,6 @@
         label = ":white_cirlce: <@&1519690471683657789>";
       }
 
-      
       const entry = {
         className: className,
         hw_name: hw_name,
