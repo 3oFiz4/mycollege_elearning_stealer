@@ -1,5 +1,10 @@
 .env
 .hw_notifier_scheduled
+.hw_notifier_last_run
+.headless_profile/
+__pycache__/
+*.pyc
+automaton_bg.log
 node_modules/
 session_auth/
 package-lock.json

@@ -59,6 +59,14 @@ WHATSAPP_GROUP_JID = "<YOUR_WHATSAPP_GROUP_JID>@g.us"
 
 Sometimes tracking each lecturer due task is tiring. I made this script for convenience sake in order to always know what task is due. That's all.
 
+# Updates
+
+- **Headless / Background Browser**: Spawns Vivaldi in the background without stealing focus or messing with your current tab (`HEADLESS_MODE` toggle).
+- **Auto-Close on Daily Repeat**: Checks if the script already ran today and closes the process/tab by itself.
+- **Mid-Loop `/login` Recovery**: Detects redirect to `/login` mid-loop, unhides the window for 30s to let you relog, then jumps back to the exact class URL in the loop and checks if the `<div>` loads.
+- **WA Error Reports**: Sends direct WA alerts on port timeout (`Scraper Loss Mid resp`) or failed relog (`Relog in fail`).
+- **Debug Options**: Added flags to ignore saved run dates/tokens (`IGNORE_LAST_RUN_DATE`, `IGNORE_HW_TOKENS`) and disable auto-close on repeat (`DISABLE_AUTO_CLOSE_ON_REPEAT`).
+
 # QNA
 
 1. Is it illegal?

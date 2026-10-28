@@ -5,6 +5,7 @@
 // @description  Expose a bunch of Homework list with their deadline and origin schedule via HTTP POST to Discord WebHook and WhatsApp
 // @author       3oFiz4
 // @match        https://elearning.pnb.ac.id/mahasiswa/class/detail/work?class=*
+// @match        https://elearning.pnb.ac.id/login*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=ac.id
 // @require      https://code.jquery.com/jquery-3.7.1.min.js
 // @grant        GM_xmlhttpRequest
@@ -18,10 +19,54 @@
 
 (function () {
   const NO_REPEAT_IN_A_DAY = true;
+  const IGNORE_LAST_RUN_DATE = false; // Set to true for debugging to ignore the date in memory
+  const IGNORE_HW_TOKENS = false; // Set to true for debugging to ignore all __HW_NOTIFIER_* tokens
+  const DISABLE_AUTO_CLOSE_ON_REPEAT = false; // Set to true to disable automatic tab/process close when already ran today
   const STORAGE_KEY_LAST_RUN = "__HW_NOTIFIER_LAST_RUN_DATE__";
+  const TOKEN_STORAGE_KEYS = ["tokenscr", "tokensrc"];
+  const LOGIN_URL_PREFIX = "https://elearning.pnb.ac.id/login";
+
+  function UTILS_shouldIgnoreHwTokens() {
+    return Boolean(
+      IGNORE_HW_TOKENS ||
+        IGNORE_LAST_RUN_DATE ||
+        sessionStorage.getItem("__HW_NOTIFIER_IGNORE_TOKENS__") === "1" ||
+        sessionStorage.getItem("__HW_NOTIFIER_IGNORE_DATE__") === "1" ||
+        window.location.search.includes("ignore_hw_tokens=1") ||
+        window.location.search.includes("ignore_date=1"),
+    );
+  }
+
+  function UTILS_shouldDisableAutoClose() {
+    return Boolean(
+      DISABLE_AUTO_CLOSE_ON_REPEAT ||
+        sessionStorage.getItem("__HW_NOTIFIER_NO_AUTO_CLOSE__") === "1" ||
+        window.location.search.includes("no_auto_close=1"),
+    );
+  }
+
+  function UTILS_hasValidTokenAuth() {
+    for (let i = 0; i < TOKEN_STORAGE_KEYS.length; i++) {
+      const val = localStorage.getItem(TOKEN_STORAGE_KEYS[i]);
+      if (val && String(val).trim().length > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function UTILS_isLoginUrl(url) {
+    const target = url || window.location.href;
+    return (
+      target.indexOf(LOGIN_URL_PREFIX) === 0 ||
+      window.location.pathname.indexOf("/login") === 0
+    );
+  }
 
   function UTILS_hasAlreadyRunToday() {
-    if (!NO_REPEAT_IN_A_DAY) return false;
+    if (UTILS_shouldIgnoreHwTokens() || !NO_REPEAT_IN_A_DAY) {
+      return false;
+    }
     const lastRun = localStorage.getItem(STORAGE_KEY_LAST_RUN);
     if (!lastRun) return false;
     const today = new Date().toDateString();
@@ -60,6 +105,11 @@
   const SESSION_KEY_CLASS_DICTIONARY = "__HW_NOTIFIER_CLASS_DICTIONARY__";
   const SESSION_KEY_DONE = "__HW_NOTIFIER_DONE__";
   const SESSION_KEY_COLLECTED_HW = "__HW_NOTIFIER_COLLECTED_HW__";
+  const SESSION_KEY_WAITING_RELOG = "__HW_NOTIFIER_WAITING_RELOG__";
+  const SESSION_KEY_RELOG_START_TS = "__HW_NOTIFIER_RELOG_START_TS__";
+  const SESSION_KEY_RESUME_URL = "__HW_NOTIFIER_RESUME_URL__";
+  const SESSION_KEY_TESTING_RELOG = "__HW_NOTIFIER_TESTING_RELOG__";
+  const RELOG_WAIT_MS = 30000; // Wait at least 30 seconds for user to log in
 
   // --- per-page state ---
   let PAGE_RETRY_COUNTER = 0;
@@ -462,8 +512,11 @@
         SESSION_KEY_CLASS_DICTIONARY,
         SESSION_KEY_DONE,
         SESSION_KEY_COLLECTED_HW,
+        "__HW_NOTIFIER_IGNORE_DATE__",
+        "__HW_NOTIFIER_IGNORE_TOKENS__",
+        "__HW_NOTIFIER_NO_AUTO_CLOSE__",
       ]);
-      UTILS_closeTab();
+      UTILS_closeTab(false);
     });
   }
 
@@ -539,7 +592,14 @@
     );
 
     UTILS_waitForFreshDOM(currentClass.class_number, function (urlReady) {
+      if (UTILS_isLoginUrl()) {
+        return;
+      }
       if (!urlReady) {
+        if (sessionStorage.getItem(SESSION_KEY_TESTING_RELOG) === "1") {
+          SEGMENT_failRelogAndStop();
+          return;
+        }
         UTILS_markClassDone(currentClass);
         SEGMENT_runQueueStep();
         return;
@@ -550,10 +610,17 @@
   }
 
   function SEGMENT_collectPanels(currentClass) {
+    if (UTILS_isLoginUrl()) {
+      return;
+    }
+
     let panels = $(".v-expansion-panel:visible");
     if (!panels.length) {
       panels = $(".v-expansion-panel");
     }
+
+    const isTestingRelog =
+      sessionStorage.getItem(SESSION_KEY_TESTING_RELOG) === "1";
 
     if (!panels.length) {
       PAGE_RETRY_COUNTER++;
@@ -570,6 +637,33 @@
         }, PAGE_RETRY_DELAY);
         return;
       }
+
+      // If we were testing whether relog succeeded and no <div> appeared on the class work page:
+      const hasClassContainerDiv =
+        !UTILS_isLoginUrl() &&
+        ($("div.container .v-card").length > 0 ||
+          $("div.v-toolbar__title").length > 0);
+
+      if (isTestingRelog && !hasClassContainerDiv) {
+        SEGMENT_failRelogAndStop();
+        return;
+      }
+
+      if (isTestingRelog && hasClassContainerDiv) {
+        console.log(
+          "[HW_Fetcher] Relog verified! Class <div> container appeared for: " +
+            currentClass.className,
+        );
+        sessionStorage.removeItem(SESSION_KEY_TESTING_RELOG);
+        sessionStorage.removeItem(SESSION_KEY_RESUME_URL);
+        UTILS_sendToLocalPort({
+          source: "HW_Fetcher",
+          status: "relog_verified",
+          currentClass: currentClass.className,
+          url: window.location.href,
+        });
+      }
+
       console.log(
         "[HW_Fetcher] No panels after retries for: " + currentClass.className,
       );
@@ -577,6 +671,21 @@
       UTILS_markClassDone(currentClass);
       SEGMENT_runQueueStep();
       return;
+    }
+
+    if (isTestingRelog) {
+      console.log(
+        "[HW_Fetcher] Relog verified! Homework <div> panels appeared for: " +
+          currentClass.className,
+      );
+      sessionStorage.removeItem(SESSION_KEY_TESTING_RELOG);
+      sessionStorage.removeItem(SESSION_KEY_RESUME_URL);
+      UTILS_sendToLocalPort({
+        source: "HW_Fetcher",
+        status: "relog_verified",
+        currentClass: currentClass.className,
+        url: window.location.href,
+      });
     }
 
     PAGE_RETRY_COUNTER = 0;
@@ -674,7 +783,13 @@
     SEGMENT_runQueueStep();
   }
 
-  function UTILS_closeTab() {
+  function UTILS_closeTab(isRepeatSkip) {
+    if (isRepeatSkip && UTILS_shouldDisableAutoClose()) {
+      console.log(
+        "[HW_Fetcher] Auto-close on repeat is disabled (debugging mode). Keeping tab open.",
+      );
+      return;
+    }
     console.log("[HW_Fetcher] Closing tab...");
     setTimeout(function () {
       window.close();
@@ -687,8 +802,125 @@
     }, CLOSE_TAB_DELAY);
   }
 
+  let HW_LOGIN_BOUNCE_REPORTED = false;
+
+  function SEGMENT_failRelogAndStop() {
+    if (HW_LOGIN_BOUNCE_REPORTED) return;
+    HW_LOGIN_BOUNCE_REPORTED = true;
+    UTILS_removeSessionKeys([
+      SESSION_KEY_QUEUE,
+      SESSION_KEY_INDEX,
+      SESSION_KEY_ACTIVE,
+      SESSION_KEY_CURRENT_CLASS,
+      SESSION_KEY_CLASS_DICTIONARY,
+      SESSION_KEY_DONE,
+      SESSION_KEY_COLLECTED_HW,
+      SESSION_KEY_WAITING_RELOG,
+      SESSION_KEY_RELOG_START_TS,
+      SESSION_KEY_RESUME_URL,
+      SESSION_KEY_TESTING_RELOG,
+    ]);
+    console.error(
+      "[HW_Fetcher] Relog check failed (<div> did not appear / still on /login). Force stopping.",
+    );
+    UTILS_sendToLocalPort({
+      source: "HW_Fetcher",
+      status: "relog_failed",
+      url: window.location.href,
+      message:
+        "[!] Relog in fail. After bouncing of token auth, user does not give any proper inputs of log-in auth. Force stop.",
+    }).then(function () {
+      UTILS_closeTab(false);
+    });
+  }
+
+  function SEGMENT_beginHwRelogWait() {
+    if (window.__HW_NOTIFIER_RELOG_TIMER_RUNNING__) return;
+    window.__HW_NOTIFIER_RELOG_TIMER_RUNNING__ = true;
+
+    const currentClass = UTILS_getSessionJSON(SESSION_KEY_CURRENT_CLASS, null);
+    const resumeUrl =
+      sessionStorage.getItem(SESSION_KEY_RESUME_URL) ||
+      (currentClass && currentClass.class_hw_url) ||
+      "https://elearning.pnb.ac.id/mahasiswa/list-class";
+
+    sessionStorage.setItem(SESSION_KEY_RESUME_URL, resumeUrl);
+
+    let startTs = parseInt(
+      sessionStorage.getItem(SESSION_KEY_RELOG_START_TS) || "0",
+      10,
+    );
+    if (!startTs) {
+      startTs = Date.now();
+      sessionStorage.setItem(SESSION_KEY_RELOG_START_TS, String(startTs));
+    }
+
+    if (sessionStorage.getItem(SESSION_KEY_WAITING_RELOG) !== "1") {
+      sessionStorage.setItem(SESSION_KEY_WAITING_RELOG, "1");
+      console.warn(
+        "[HW_Fetcher] Routed to /login mid-loop! Requesting user login and waiting at least " +
+          RELOG_WAIT_MS / 1000 +
+          "s before retrying current class URL:",
+        resumeUrl,
+      );
+      UTILS_sendToLocalPort({
+        source: "HW_Fetcher",
+        status: "login_required",
+        currentClass: currentClass ? currentClass.className : "",
+        url: window.location.href,
+        resumeUrl: resumeUrl,
+        waitSeconds: RELOG_WAIT_MS / 1000,
+        message: "HW_Fetcher routed to /login mid-loop. Waiting 30s for user re-login.",
+      });
+    }
+
+    const timer = setInterval(function () {
+      const elapsed = Date.now() - startTs;
+      const remainingMs = Math.max(0, RELOG_WAIT_MS - elapsed);
+      if (remainingMs <= 0) {
+        clearInterval(timer);
+        sessionStorage.removeItem(SESSION_KEY_WAITING_RELOG);
+        sessionStorage.removeItem(SESSION_KEY_RELOG_START_TS);
+        sessionStorage.setItem(SESSION_KEY_TESTING_RELOG, "1");
+        console.log(
+          "[HW_Fetcher] 30s relog wait finished. Re-opening current class URL in loop:",
+          resumeUrl,
+        );
+        window.location.href = resumeUrl;
+      }
+    }, 500);
+  }
+
+  function SEGMENT_startHwUrlWatcher() {
+    if (sessionStorage.getItem(SESSION_KEY_WAITING_RELOG) === "1") {
+      SEGMENT_beginHwRelogWait();
+      return;
+    }
+
+    if (
+      sessionStorage.getItem(SESSION_KEY_TESTING_RELOG) === "1" &&
+      UTILS_isLoginUrl()
+    ) {
+      SEGMENT_failRelogAndStop();
+      return;
+    }
+
+    setInterval(function () {
+      if (HW_LOGIN_BOUNCE_REPORTED) return;
+      if (UTILS_isQueueActive() && UTILS_isLoginUrl()) {
+        if (sessionStorage.getItem(SESSION_KEY_TESTING_RELOG) === "1") {
+          SEGMENT_failRelogAndStop();
+          return;
+        }
+        SEGMENT_beginHwRelogWait();
+      }
+    }, 500);
+  }
+
   // --- entry point ---
   window.addEventListener("load", () => {
+    SEGMENT_startHwUrlWatcher();
+    if (UTILS_isLoginUrl()) return;
     if (!UTILS_isWorkPage()) return;
     if (!UTILS_isQueueActive()) return;
 
@@ -704,7 +936,7 @@
         items: [],
         message: "HW_Fetcher already ran today.",
       }).then(function () {
-        UTILS_closeTab();
+        UTILS_closeTab(true);
       });
       return;
     } else {
