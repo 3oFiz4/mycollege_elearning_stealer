@@ -20,7 +20,7 @@ const DEFAULT_ALERT_MESSAGE =
 const SEND_ON_EMPTY = true;
 
 // Debug configuration: offset current date by N days forward (e.g. 3) to test deadline urgency & mentions
-const DEBUG_DATE_OFFSET_DAYS = 3;
+const DEBUG_DATE_OFFSET_DAYS = 0;
 
 /**
  * Format homework items into a clean WhatsApp message
@@ -48,13 +48,13 @@ function formatWhatsAppMessage(items) {
   // If items have daysDiff calculated without debug offset, adjust it by DEBUG_DATE_OFFSET_DAYS
   const adjustedItems = items.map((hw) => ({
     ...hw,
-    daysDiff: DEBUG_DATE_OFFSET_DAYS ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS : Number(hw.daysDiff),
+    daysDiff: DEBUG_DATE_OFFSET_DAYS
+      ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS
+      : Number(hw.daysDiff),
   }));
 
   const hasUrgent = adjustedItems.some((hw) => Number(hw.daysDiff) <= 2);
-  const tagHeader = hasUrgent
-    ? "🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n"
-    : "📚 *PENGINGAT TUGAS E-LEARNING* 📚\n\n";
+  const tagHeader = hasUrgent ? "🚨 *PERINGATAN DEADLINE DEKAT!* 🚨\n\n" : "";
 
   let msg = tagHeader;
   msg += "eLEARNING HOMEWORK REMINDER \n";
@@ -89,7 +89,6 @@ function formatWhatsAppMessage(items) {
 
   msg += "━━━━━━━━━━━━━━━━━━━━━\n";
   msg += `Total: *${items.length}* tugas terdeteksi.\n`;
-  msg += "_Notifikasi otomatis dikirim via E-Learning Stealer_";
 
   return msg;
 }
@@ -371,9 +370,13 @@ async function sendSelfAlert(customMessage) {
           }
           await sock.sendMessage(targetJid, { delete: deletePayload });
           deleted = true;
-          console.log(`[alert.js] Successfully sent revoke for message ${msgId}.`);
+          console.log(
+            `[alert.js] Successfully sent revoke for message ${msgId}.`,
+          );
         } catch (delErr) {
-          console.warn(`[alert.js] sock.sendMessage delete failed: ${delErr.message}`);
+          console.warn(
+            `[alert.js] sock.sendMessage delete failed: ${delErr.message}`,
+          );
         }
 
         // Attempt 2: If fromMe was false or attempt 1 threw, try as admin revoke (edit: '8')
@@ -404,7 +407,8 @@ async function sendSelfAlert(customMessage) {
                     {
                       id: msgId,
                       fromMe: fromMe,
-                      timestamp: target.messageTimestamp || Date.now().toString(),
+                      timestamp:
+                        target.messageTimestamp || Date.now().toString(),
                     },
                   ],
                 },
@@ -425,12 +429,12 @@ async function sendSelfAlert(customMessage) {
       // Account for DEBUG_DATE_OFFSET_DAYS during simulation debugging
       const shouldPingEveryone = Boolean(
         resolved.items &&
-          resolved.items.some((hw) => {
-            const effectiveDiff = DEBUG_DATE_OFFSET_DAYS
-              ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS
-              : Number(hw.daysDiff);
-            return effectiveDiff <= 2;
-          }),
+        resolved.items.some((hw) => {
+          const effectiveDiff = DEBUG_DATE_OFFSET_DAYS
+            ? Number(hw.daysDiff) - DEBUG_DATE_OFFSET_DAYS
+            : Number(hw.daysDiff);
+          return effectiveDiff <= 2;
+        }),
       );
 
       const mentions = [];
@@ -443,7 +447,11 @@ async function sendSelfAlert(customMessage) {
         try {
           // Load reverse LID-to-phone mapping cache if available
           let reverseLidCache = {};
-          const cachePath = path.join(__dirname, "session_auth", "lid_reverse_cache.json");
+          const cachePath = path.join(
+            __dirname,
+            "session_auth",
+            "lid_reverse_cache.json",
+          );
           if (fs.existsSync(cachePath)) {
             try {
               reverseLidCache = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
@@ -457,11 +465,15 @@ async function sendSelfAlert(customMessage) {
           }
 
           // If target group is community announcement group, also check parent community members
-          const groups = await sock.groupFetchAllParticipating().catch(() => ({}));
+          const groups = await sock
+            .groupFetchAllParticipating()
+            .catch(() => ({}));
           const targetGroup = groups[targetJid];
           if (targetGroup?.linkedParent) {
             try {
-              const parentMeta = await sock.groupMetadata(targetGroup.linkedParent);
+              const parentMeta = await sock.groupMetadata(
+                targetGroup.linkedParent,
+              );
               for (const p of parentMeta.participants || []) {
                 rawParticipants.push(p);
               }
@@ -471,8 +483,12 @@ async function sendSelfAlert(customMessage) {
           }
 
           // Identify our own bot numbers to avoid self-tagging
-          const myPn = sock.user?.id ? sock.user.id.split("@")[0].split(":")[0] : null;
-          const myLid = sock.user?.lid ? sock.user.lid.split("@")[0].split(":")[0] : null;
+          const myPn = sock.user?.id
+            ? sock.user.id.split("@")[0].split(":")[0]
+            : null;
+          const myLid = sock.user?.lid
+            ? sock.user.lid.split("@")[0].split(":")[0]
+            : null;
 
           // Deduplicate so each human member is represented only ONCE
           const seenUsers = new Set();

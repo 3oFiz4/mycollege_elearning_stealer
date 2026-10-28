@@ -67,7 +67,7 @@
   // --- Debug / Date Offset Config ---
   // Set DEBUG_DATE_OFFSET_DAYS to a number (e.g., 3) to simulate a date forward in time.
   // 3 days forward simulates Date.now() + 3 days, making 5-day deadlines become 2 days left.
-  const DEBUG_DATE_OFFSET_DAYS = 4;
+  const DEBUG_DATE_OFFSET_DAYS = 0;
 
   function UTILS_parseDueDate(text) {
     const match = text.match(/Due\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
